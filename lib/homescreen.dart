@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 // ignore: depend_on_referenced_packages
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 
 class HomeScreen extends StatefulWidget {
@@ -14,7 +16,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _controller = TextEditingController();
   late final FocusNode _focusNode;
-  List<Map<String, String>> _messages = []; // {"sender": "user" or "bot", "text": "..."}
+  final List<Map<String, String>> _messages = []; // {"sender": "user" or "bot", "text": "..."}
+  final ScrollController _scrollController = ScrollController();
   
 
   @override
@@ -37,22 +40,100 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _controller.dispose();
     _focusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  void _sendMessage() {
+  Future<void> _sendMessage() async {
     final messageText = _controller.text.trim();
     if (messageText.isEmpty) return;
 
     setState(() {
       _messages.add({"sender": "user", "text": messageText});
-      _messages.add({
-        "sender": "bot",
-        "text": "Your message is heard and we are here for you. Working soon to reply."
-      });
     });
 
     _controller.clear();
+
+    // Re-enable smooth scrolling at the start
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
+
+    // Add typing... animation message
+    setState(() {
+      _messages.add({"sender": "bot", "text": "typing..."});
+    });
+
+    try {
+      final client = http.Client();
+      final request = http.Request(
+        'POST',
+        Uri.parse('http://127.0.0.1:8000/chat'),
+      );
+      request.headers.addAll({'Content-Type': 'application/json'});
+      request.body = jsonEncode({'message': messageText});
+
+      final streamedResponse = await client.send(request);
+      print("Response status: ${streamedResponse}");
+      final stream = streamedResponse.stream.transform(utf8.decoder);
+      print(stream);
+      String buffer = '';
+      String botReply = '';
+
+      await for (final chunk in stream) {
+        buffer += chunk;
+        print(buffer);
+        while (buffer.contains('\n')) {
+          final splitIndex = buffer.indexOf('\n');
+          final jsonStr = buffer.substring(0, splitIndex).trim();
+          buffer = buffer.substring(splitIndex + 1);
+
+          if (jsonStr.isEmpty) continue;
+
+          try {
+            final data = jsonDecode(jsonStr);
+            final token = data['token'] ?? "";
+            print("Received token: $token");
+
+            await Future.delayed(Duration(milliseconds: 18));
+            setState(() {
+              if (_messages[_messages.length - 1]["text"] == "typing...") {
+                _messages[_messages.length - 1]["text"] = "";
+              }
+              botReply += token;
+              _messages[_messages.length - 1]["text"] = botReply;
+            });
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: Duration(milliseconds: 100),
+                curve: Curves.easeOut,
+              );
+            });
+          } catch (e) {
+            print("Error parsing chunked JSON: $e");
+            continue;
+          }
+        }
+      }
+    } catch (e) {
+      setState(() {
+        _messages[_messages.length - 1]["text"] = "Network error. Check your connection.$e";
+      });
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   @override
@@ -66,6 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Expanded(
             child: ListView.builder(
+              controller: _scrollController,
               padding: const EdgeInsets.all(12),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
