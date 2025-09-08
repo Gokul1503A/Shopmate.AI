@@ -18,7 +18,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final FocusNode _focusNode;
   final List<Map<String, dynamic>> _messages = []; // {"sender": "user" or "bot", "text": "...", "type": "text" or "recommendation", "product": {...}}
   final ScrollController _scrollController = ScrollController();
-  bool _isListening = false; // For future speech mode integration
+  final bool _isListening = false; // For future speech mode integration
 
   @override
   void initState() {
@@ -80,16 +80,13 @@ class _HomeScreenState extends State<HomeScreen> {
       request.body = jsonEncode({'message': messageText});
 
       final streamedResponse = await client.send(request);
-      print("Response status: ${streamedResponse}");
       final stream = streamedResponse.stream.transform(utf8.decoder);
-      print(stream);
       String buffer = '';
       String botReply = '';
       List<Map<String, dynamic>> recommendations = [];
 
       await for (final chunk in stream) {
         buffer += chunk;
-        print(buffer);
         while (buffer.contains('\n')) {
           final splitIndex = buffer.indexOf('\n');
           final jsonStr = buffer.substring(0, splitIndex).trim();
@@ -127,7 +124,6 @@ class _HomeScreenState extends State<HomeScreen> {
             if (data.containsKey('token')) {
               final token = data['token'] as String;
               if (token.trim().isEmpty) continue;
-              print("Received token: $token");
 
               await Future.delayed(Duration(milliseconds: 18));
               setState(() {
@@ -149,7 +145,12 @@ class _HomeScreenState extends State<HomeScreen> {
               });
             }
           } catch (e) {
-            print("Error parsing chunked JSON: $e");
+            // Handle JSON parsing errors gracefully
+            setState(() {
+              if (_messages.isNotEmpty && _messages[_messages.length - 1]["text"] == "typing...") {
+                _messages[_messages.length - 1]["text"] = "Error processing response.";
+              }
+            });
             continue;
           }
         }
